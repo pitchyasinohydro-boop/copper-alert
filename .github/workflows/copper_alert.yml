@@ -2,8 +2,7 @@ name: Copper Wire Sale Monitor
 
 on:
   schedule:
-    # ทุก 30 นาที (ถ้าต้องการ 6 ชม. ใช้ "0 */6 * * *")
-    - cron: "*/30 * * * *"
+    - cron: "0 */3 * * *"  # ตรวจทุก 3 ชั่วโมง
   workflow_dispatch:
 
 jobs:
@@ -12,10 +11,10 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v4
       with:
         python-version: '3.10'
 
@@ -29,40 +28,34 @@ jobs:
         CHAT_ID: ${{ secrets.CHAT_ID }}
       run: |
         python <<'EOF'
-        import os
         import requests
         from bs4 import BeautifulSoup
 
-        BOT_TOKEN = os.getenv("BOT_TOKEN")
-        CHAT_ID   = os.getenv("CHAT_ID")
-
+        # ✅ ตัวกรองใหม่: เอาเฉพาะโพสต์ขายเท่านั้น
         keywords = [
-            "สายไฟทองแดง","เศษสายไฟ","สายไฟเก่า","สายไฟรวม กิโลละ",
-            "สาย VAF","VCT","NYY","THW","TVVB","สายลิฟต์",
-            "สายแบนขาว","สายแบนเทา","copper wire scrap","ปอกสายไฟ"
+            "ขายสายไฟทองแดง", "ขายสายไฟเก่า", "ขายสายไฟรวม",
+            "ขาย VAF", "ขาย VCT", "ขาย NYY", "ขาย THW",
+            "ขาย TVVB", "ขายสายลิฟต์", "ขายสายแบนขาว", "ขายสายแบนเทา"
         ]
 
-        # ตัวอย่างจำลอง URL Marketplace (ของจริง Facebook มักบล็อกการดึงแบบไม่ล็อกอิน)
-        url = "https://www.facebook.com/marketplace/bangkok/search/?query=สายไฟทองแดง"
+        # ตัวอย่าง URL Marketplace (จำลอง)
+        url = "https://www.facebook.com/marketplace/bangkok/search/?query=ขายสายไฟทองแดง"
 
-        def notify(msg: str):
-            try:
-                requests.post(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                    data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"},
-                    timeout=20
-                )
-            except Exception as e:
-                print("Notify error:", e)
+        # ฟังก์ชันส่งแจ้งเตือน Telegram
+        def notify(msg):
+            requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}
+            )
 
         try:
-            r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=20)
-            if r.status_code == 200:
-                soup = BeautifulSoup(r.text, "html.parser")
-                # หมายเหตุ: โค้ดนี้เป็นโครงสร้างทดสอบให้ workflow ทำงานและแจ้งเตือน
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, "html.parser")
+                # หมายเหตุ: Facebook ป้องกันการ scrap จริง — ส่วนนี้เป็นโครงสร้างตัวอย่าง
                 notify("✅ Copper wire monitor checked — No errors.")
             else:
-                notify(f"⚠️ Failed to fetch: {r.status_code}")
+                notify(f"⚠️ Failed to fetch: {response.status_code}")
         except Exception as e:
             notify(f"❌ Error: {e}")
         EOF
