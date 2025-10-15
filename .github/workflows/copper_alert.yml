@@ -1,0 +1,68 @@
+name: Copper Wire Sale Monitor
+
+on:
+  schedule:
+    # ทุก 30 นาที (ถ้าต้องการ 6 ชม. ใช้ "0 */6 * * *")
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check_posts:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4
+
+    - name: Run monitor script
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
+      run: |
+        python <<'EOF'
+        import os
+        import requests
+        from bs4 import BeautifulSoup
+
+        BOT_TOKEN = os.getenv("BOT_TOKEN")
+        CHAT_ID   = os.getenv("CHAT_ID")
+
+        keywords = [
+            "สายไฟทองแดง","เศษสายไฟ","สายไฟเก่า","สายไฟรวม กิโลละ",
+            "สาย VAF","VCT","NYY","THW","TVVB","สายลิฟต์",
+            "สายแบนขาว","สายแบนเทา","copper wire scrap","ปอกสายไฟ"
+        ]
+
+        # ตัวอย่างจำลอง URL Marketplace (ของจริง Facebook มักบล็อกการดึงแบบไม่ล็อกอิน)
+        url = "https://www.facebook.com/marketplace/bangkok/search/?query=สายไฟทองแดง"
+
+        def notify(msg: str):
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                    data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"},
+                    timeout=20
+                )
+            except Exception as e:
+                print("Notify error:", e)
+
+        try:
+            r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=20)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, "html.parser")
+                # หมายเหตุ: โค้ดนี้เป็นโครงสร้างทดสอบให้ workflow ทำงานและแจ้งเตือน
+                notify("✅ Copper wire monitor checked — No errors.")
+            else:
+                notify(f"⚠️ Failed to fetch: {r.status_code}")
+        except Exception as e:
+            notify(f"❌ Error: {e}")
+        EOF
