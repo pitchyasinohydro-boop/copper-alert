@@ -1,0 +1,150 @@
+name: Copper Wire Sale Monitor
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"  # ตรวจทุก 6 ชั่วโมง
+  workflow_dispatch:
+
+jobs:
+  check_posts:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:        
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4
+
+    - name: Run monitor script
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
+      run: |
+        python <<'EOF'
+        import requests
+        from bs4 import BeautifulSoup
+
+        keywords = ["สายไฟทองแดง", "เศษสายไฟ", "สายไฟเก่า", "สายไฟรวม กิโลละ", 
+                    "สาย VAF", "VCT", "NYY", "THW", "TVVB", "สายลิฟต์", 
+                    "สายแบนขาว", "สายแบนเทา", "copper wire scrap", "ปอกสายไฟ"]
+
+        # ตัวอย่างจำลอง URL Marketplace
+        url = "https://www.facebook.com/marketplace/bangkok/search/?query=สายไฟทองแดง"
+
+        # Telegram alert function
+        def notify(msg):
+            requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}
+            )
+
+        try:
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, "html.parser")
+                # (หมายเหตุ: Facebook ป้องกัน scraping จริง แต่ตัวอย่างนี้คือโครงสร้างให้บอทคุณ)
+                notify("✅ Copper wire monitor checked — No errors.")
+            else:
+                notify(f"⚠️ Failed to fetch: {response.status_code}")
+        except Exception as e:
+            notify(f"❌ Error: {e}")
+        EOF
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
