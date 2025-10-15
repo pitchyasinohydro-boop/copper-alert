@@ -1,0 +1,209 @@
+name: Copper Wire Sale Monitor
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"  # รันทุก 3 ชั่วโมง (ปรับได้ตามต้องการ)
+  workflow_dispatch:
+
+jobs:
+  check_posts:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4
+
+    - name: Run monitor script
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
+      run: |
+        python <<'EOF'
+        import requests, re, html, datetime, hashlib
+        from urllib.parse import quote, urlparse
+        from bs4 import BeautifulSoup
+
+        # =============================
+        # ⚙️ CONFIG
+        # =============================
+        BOT_TOKEN = "${{ secrets.BOT_TOKEN }}"
+        CHAT_ID   = "${{ secrets.CHAT_ID }}"
+        TIMEOUT   = 20
+
+        HEADERS = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+            "Accept-Language": "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7",
+        }
+
+        SALE_TERMS = ["ขาย", "ปล่อย", "โล๊ะ", "ยกล็อต", "เหมาขาย"]
+        BUY_NEGATIVE = ["รับซื้อ", "ซื้อ", "ตามหา", "หาซื้อ", "รับจ้างปอก", "รับจ้าง"]
+        WIRE_TERMS = [
+            "สายไฟ", "สายไฟทองแดง", "สายไฟเก่า", "สายไฟรวม",
+            "vaf", "vct", "nyy", "thw", "tvvb",
+            "สายลิฟต์", "สายแบนขาว", "สายแบนเทา",
+            "copper wire scrap", "copper cable scrap", "ปอกสายไฟ"
+        ]
+        SALE_KEYWORDS = [
+            "ขายสายไฟทองแดง", "ขายสายไฟเก่า", "ขายสายไฟรวม",
+            "ขาย vaf", "ขาย vct", "ขาย nyy", "ขาย thw",
+            "ขาย tvvb", "ขายสายลิฟต์", "ขายสายแบนขาว", "ขายสายแบนเทา"
+        ]
+
+        FOCUS_LOCS = [
+            "นนทบุรี", "ปทุมธานี", "กรุงเทพ", "กทม", "Bangkok", "Nonthaburi",
+            "บางบัวทอง", "รามอินทรา", "มีนบุรี", "บางใหญ่", "บางกรวย",
+            "ติวานนท์", "บางแค", "ดอนเมือง", "หลักสี่", "ตลิ่งชัน",
+            "ลาดพร้าว", "สมุทรปราการ", "บางขุนเทียน", "ลำลูกกา"
+        ]
+
+        # =============================
+        # 🧠 UTILITIES
+        # =============================
+        def contains_sale_keywords(text: str) -> bool:
+            t = (text or "").lower()
+            if any(neg in t for neg in BUY_NEGATIVE):
+                return False
+            if any(kw in t for kw in [s.lower() for s in SALE_KEYWORDS]):
+                return True
+            if any(s in t for s in SALE_TERMS) and any(w in t for w in WIRE_TERMS):
+                return True
+            return False
+
+        def extract_price(text: str):
+            p = re.search(r"(\d{2,6}(?:[,\d]{0,3})?)\s*(?:บาท|บ\.|฿)\s*(?:\/|\s*)?(?:กก\.|kg)?", text or "", flags=re.I)
+            if p:
+                try:
+                    return int(p.group(1).replace(",", ""))
+                except Exception:
+                    return p.group(1)
+            return None
+
+        def extract_weight(text: str):
+            w = re.search(r"(\d{1,4})\s*(กก\.|กิโล|โล|kg|ตัน)", text or "", flags=re.I)
+            if not w:
+                return None
+            val = float(w.group(1))
+            if "ตัน" in w.group(2):
+                val *= 1000
+            return f"{val:.0f} กก."
+
+        def detect_location(text: str):
+            for loc in FOCUS_LOCS:
+                if loc.lower() in (text or "").lower():
+                    return loc
+            return "ไม่ระบุ"
+
+        def detect_wire_type(text: str):
+            for t in ["VAF","VCT","NYY","THW","TVVB","สายลิฟต์","สายแบนขาว","สายแบนเทา"]:
+                if t.lower() in (text or "").lower():
+                    return t
+            if "สาย" in (text or ""):
+                return "สายไฟรวม"
+            return "ไม่ระบุ"
+
+        def notify(msg):
+            requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"},
+                timeout=TIMEOUT
+            )
+
+        def pack_message(item):
+            return (
+                f"🔔 พบโพสต์ใหม่ ({item.get('platform')})\n"
+                f"กลุ่ม/เพจ: {item.get('group')}\n"
+                f"ราคา: {item.get('price')} บาท\n"
+                f"น้ำหนัก: {item.get('weight')}\n"
+                f"สาย: {item.get('wire')}\n"
+                f"พื้นที่: {item.get('location')}\n"
+                f"รายละเอียด: {item.get('title')[:200]}\n"
+                f"ลิงก์: {item.get('url')}"
+            )
+
+        # =============================
+        # 🔎 SCRAPER
+        # =============================
+        def fetch_pantipmarket():
+            items = []
+            base = "https://www.pantipmarket.com/search.php?keyword="
+            for kw in SALE_KEYWORDS:
+                r = requests.get(base + quote(kw), headers=HEADERS, timeout=TIMEOUT)
+                if r.status_code != 200:
+                    continue
+                soup = BeautifulSoup(r.text, "html.parser")
+                for a in soup.select("a[href*='item.php?']"):
+                    title = a.get_text(" ", strip=True)
+                    if not contains_sale_keywords(title):
+                        continue
+                    href = a.get("href")
+                    full = href if href.startswith("http") else "https://www.pantipmarket.com/" + href
+                    item = {
+                        "platform": "Pantipmarket",
+                        "group": "Pantipmarket",
+                        "title": title,
+                        "price": extract_price(title),
+                        "weight": extract_weight(title),
+                        "wire": detect_wire_type(title),
+                        "location": detect_location(title),
+                        "url": full
+                    }
+                    items.append(item)
+            return items
+
+        def fetch_kaidee():
+            items = []
+            base = "https://www.kaidee.com/s?q="
+            for kw in SALE_KEYWORDS:
+                r = requests.get(base + quote(kw), headers=HEADERS, timeout=TIMEOUT)
+                if r.status_code != 200:
+                    continue
+                soup = BeautifulSoup(r.text, "html.parser")
+                for a in soup.select("a[href*='/product/']"):
+                    title = a.get_text(" ", strip=True)
+                    if not contains_sale_keywords(title):
+                        continue
+                    href = a.get("href")
+                    full = href if href.startswith("http") else "https://www.kaidee.com" + href
+                    item = {
+                        "platform": "Kaidee",
+                        "group": "Kaidee",
+                        "title": title,
+                        "price": extract_price(title),
+                        "weight": extract_weight(title),
+                        "wire": detect_wire_type(title),
+                        "location": detect_location(title),
+                        "url": full
+                    }
+                    items.append(item)
+            return items
+
+        # =============================
+        # 🚀 MAIN
+        # =============================
+        print("[*] Checking for new posts...")
+        results = []
+        try:
+            results += fetch_pantipmarket()
+        except Exception as e:
+            print("Pantip error:", e)
+        try:
+            results += fetch_kaidee()
+        except Exception as e:
+            print("Kaidee error:", e)
+
+        if not results:
+            notify("✅ ไม่มีโพสต์ใหม่ในรอบนี้")
+        else:
+            for it in results[:5]:
+                notify(pack_message(it))
+        print("[*] Done.")
+        EOF
